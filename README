@@ -1,0 +1,5 @@
+Some scripts to make Minecraft PE maps more interesting by generating features. Back up your maps before using!
+
+Requires:
+* pymclevel - For map editiong
+* OpenNBT - To load player posistion
