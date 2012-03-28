@@ -5,10 +5,13 @@ import sys
 import logging
 import random
 
-import numpy
+from numpy import array, zeros, round, where, mod, ravel, dot, random
+from math import degrees, radians
 
 from pymclevel.pocket import PocketWorld
 from opennbt import NBTFile
+
+from map_view import MapView
 
 # Define a "slice" in the x * y or z * y dimension which will
 # replace existing blocks where caving is in progress. A value
@@ -20,50 +23,27 @@ from opennbt import NBTFile
 # or else when the cave changes dimension you will end up with
 # a dead end. But this could be desired to make exploring the
 # cave a bit more involved.
-cave_mask = numpy.array([-1,  0,  0,  0, -1, 
-                         -1,  0,  0,  0, -1,
-                          0,  0,  0,  0,  0,
-                          0,  0,  0,  0,  0,
-                         -1, -1,  1, -1, -1,
-                         -1,  9,  9,  9, -1]).reshape(6, 5)
+cave_pattern = array([
+        [[-1, -1, -1, -1, -1,],
+         [-1, -1, -1, -1, -1,],
+         [-1,  0,  0,  0, -1,],
+         [-1,  0,  0,  0, -1,],
+         [ 1,  0,  0,  0,  1,],
+         [ 1,  1,  1,  1,  1,],],
+
+        [[-1, -1, -1, -1, -1,],
+         [-1, -1, -1, -1, -1,],
+         [-1,  0,  0,  0, -1,],
+         [-1,  0,  0,  0, -1,],
+         [ 1,  0,  0,  0,  1,],
+         [ 1,  1,  1,  1,  1,],],
+        ])
 
 # Set up logging so we can see debug messages from pymclevel
 logger = logging.getLogger()
 sh=logging.StreamHandler()
 logger.addHandler(sh)
 logger.setLevel(logging.DEBUG)
-
-def map_slice(world, pos, size, set_val=None, swap_xz=False):
-    """Returns or sets an array of block IDs into the world with the first 
-dimension being decreasing y and the second increasing x or z. By default
-the z dimension is iterated over unless swap_xz is true."""
-    x_beg, y_beg, z_beg = pos
-    y_size, lat_size = size
-
-    if set_val != None and (len(set_val.shape) != 2 or set_val.shape[1] != lat_size or set_val.shape[0] != y_size):
-        raise Exception("set_val of shape: %s which does not match x,y set size: %d, %d" % (set_val.shape, lat_size, y_size))
-
-    out_data = numpy.zeros((y_size, lat_size), dtype=int)
-    if swap_xz:
-        lat_in = z_beg
-    else:
-        lat_in = x_beg
-
-    for lat_out in range(lat_size):
-        y_in = y_beg
-        for y_out in range(y_size):
-            if set_val != None:
-                if swap_xz:
-                    world.setBlockAt(x_beg, y_in, lat_in, set_val[y_size-y_out-1, lat_out])
-                else:
-                    world.setBlockAt(lat_in, y_in, z_beg, set_val[y_size-y_out-1, lat_out])
-            if swap_xz:
-                out_data[y_size-y_out-1, lat_out] = world.blockAt(x_beg, y_in, lat_in)
-            else:
-                out_data[y_size-y_out-1, lat_out] = world.blockAt(lat_in, y_in, z_beg)
-            y_in += 1
-        lat_in += 1
-    return out_data
 
 w_file = sys.argv[1]
 logger.info("Loading world file: %s" % w_file)
@@ -74,55 +54,80 @@ logger.info("Loading player file: %s" % p_file)
 player = NBTFile(p_file, compressed=False)
 
 # Extract player posistion from NBT file and convert to numpy array
-player_pos = [ int(pval.value) for pval in player.value['Player'].value['Pos'].value ]
+player_pos = array([ round(pval.value) for pval in player.value['Player'].value['Pos'].value ])
 logger.debug("Player posistion: %s" % player_pos)
 
-# Make a pilar a bit away to make where cave begins
-pilar = numpy.zeros((10, 1), dtype=int)
-pilar[:,:] = world.materials.Obsidian.ID
-map_slice(world, player_pos + numpy.array([0,-1,-2]), pilar.shape, pilar)
+# Get closest yaw to something divisible by 90 deg
+player_yaw = mod(player.value['Player'].value['Rotation'].value[0].value, 360)
+player_yaw = radians(90*round(player_yaw/90))
+logger.debug("Player yaw: %s" % degrees(player_yaw))
 
-# Start a bit below where player stands, but leave a bit above surface so 
-# we can find cave entrance
-start_pos = numpy.array(player_pos) + numpy.array([0, -cave_mask.shape[0]+2, 0])
+# Set up view object we will use to move through the world
+cave_view = MapView(world, cave_pattern.shape, player_pos, yaw=player_yaw)
 
-where_set = numpy.where(cave_mask > -1)
-curr_pos = start_pos
-swap_xz = False # Are we using x or z for slicing
-swap_len = 0 # How far weve gone since changing from z or x direction
-forward_inc = 1 # Either increment or decrement in the current forward directionx
-while 0 < curr_pos[0] < 512 and 0 < curr_pos[1] < 512 and \
-        cave_mask.shape[0] < curr_pos[1] < 128: # Don't completely hit bedrock
-    # Get current map slice and apply mask
-    curr_slice = map_slice(world, curr_pos, cave_mask.shape, swap_xz=swap_xz)
-    curr_slice[where_set] = cave_mask[where_set]
-    curr_slice = map_slice(world, curr_pos, cave_mask.shape[::-1], curr_slice, swap_xz=swap_xz)
+# Move starting point centered in front of player, 
+# a bit in front and a bit down
+cave_view.translate_relative((cave_pattern.shape[2]/2, -cave_pattern.shape[1]/2, cave_pattern.shape[0]))
+
+# Mark which points we will actually set with the pattern
+where_set = where(cave_pattern > -1)
+
+count = 0
+max_cave_len = 500
+keep_caving = True
+forward_inc = cave_pattern.shape[0]
+while keep_caving:
+    count += 1
+
+    # Get current map slice and apply pattern
+    curr_slice = cave_view.map_data()
+    curr_slice[where_set] = cave_pattern[where_set]
+    curr_slice = cave_view.map_data(curr_slice)
+    logger.debug("%s @ %f deg" % (cave_view.position(), mod(degrees(cave_view.yaw), 360)))
     logger.debug("%s" % curr_slice)
 
-    # Increment posistion according to which dimension we are currently moving
-    lat_inc = numpy.round(random.uniform(-0.6,0.6))
-    if swap_xz:
-        curr_pos[0] += forward_inc
-        curr_pos[2] += lat_inc
+    # Change orientation every so often
+    if(random.uniform(0,1) > 0.5 and mod(count, 10) == 0):
+        if (random.uniform(0,1) > 0.5):
+            turn_dir =  90
+        else:
+            turn_dir = -90
+        cave_view.rotate_y(radians(turn_dir))
+        logger.debug("Changing orientation by %f at count %d" % (turn_dir, count))
     else:
-        curr_pos[0] += lat_inc
-        curr_pos[2] += forward_inc
-        
-    # Possibly go down a bit
-    curr_pos[1] += numpy.round(random.uniform(-0.6,0))
+        # Don't rotate and translate in same step, might create walls that make
+        # cave seemingly dead end
 
-    # Swap x and z every so often
-    if(random.uniform(0,1) > 0.6 and swap_len > 10):
-        logger.debug("Changing x/z forward dimension!")
-        swap_xz = not swap_xz
-        swap_len = 0
-        # Change direction in the dimension we are moving
-        # very rarely
-        if (random.uniform(0,1) > 0.9):
-            logger.debug("Changing forward increment!")
-            forward_inc *= -1
-    else:
-        swap_len += 1
+        # Random amount of side to side and vertical motion, equally likely
+        shear_inc = random.random_integers(-1, 1)
+
+        # Random vertical motion
+        # Pick among -1, 0, or 1 with -1 and 0 being more likely
+        y_inc = random.binomial(2,0.4)-1 
+
+        # Go forward relative to the current orientation,
+        # Move forward the size of the number of patterns in the z axis
+        cave_view.translate_relative((shear_inc, y_inc, forward_inc))
+
+    if not cave_view.in_bounds():
+        logger.debug("Cave went out of bounds, quiting.")
+        keep_caving = False
+    elif count*forward_inc > max_cave_len:
+        logger.debug("Hit max cave length, %d" % max_cave_len)
+        keep_caving = False
+    elif all(ravel(cave_view.map_data()) == 0):
+        logger.debug("Hit air pocket\n%s" % cave_view.map_data())
+        keep_caving = False
+    elif any(ravel(cave_view.map_data()) == world.materials.Bedrock.ID):
+        # Lets not go past any bedrock blocks or else we might
+        # make a hole in the world
+        logger.debug("Hit bedrock\n%s" % cave_view.map_data())
+        keep_caving = False
+
+# Save our changes
+world.saveInPlace()
+
+logger.debug("Cave was %d blocks long" % (count * forward_inc))
 
 # Remove the logger handler so if we rerun in ipython
 # we dont start getting duplicate log messages

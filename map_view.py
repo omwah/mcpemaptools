@@ -1,6 +1,6 @@
 import logging
 
-from math import sin, cos, radians, degrees
+from math import sin, cos, radians, degrees, pi
 from numpy import array, zeros, dot, round, all
 
 logger = logging.getLogger(__file__)
@@ -14,20 +14,30 @@ class MapView(object):
     and z will be in increasing order."""
 
     def __init__(self, world, view_shape, pos=(0,0,0), yaw=0, **kwargs):
-        self.world = world
-        self.yaw = yaw
+        """Create a new view into the Minecraft world given the world
+        object, size of the view and optionally a initial position
+        and yaw"""
 
         if len(view_shape) != 3:
             raise Exception("view_shape must be 3 numbers z size, y size and x size")
-        self.view = zeros(list(view_shape) + [4], dtype=int)
-    
-        self.pos = pos
 
+        self.world = world
+
+        # Create a matrix at the given position
+        self.view = zeros(list(view_shape) + [4], dtype=int)
+        self.pos = pos
         self.set_position(self.pos, **kwargs)
+
+        # To keep track of rotations along y axis (yaw)
+        # We let the rotate routine keep track, but
+        # we must initialize first
+        self.yaw = 0
         self.rotate_y(yaw)
 
+        logger.debug("Created view at position %s with yaw %s" % (self.pos, degrees(self.yaw)))
+
     def position(self):
-        """Returns posistion from which the view originates,
+        """Returns position from which the view originates,
         ie: The bottom right corner of the 0th z dimension"""
 
         return self.view[0, -1, -1, :3]
@@ -55,6 +65,8 @@ class MapView(object):
         return self.view
 
     def apply_transformation(self, Tmatrix):
+        """Apply a transformation matrix to all coordinates in the view"""
+
         if len(Tmatrix.shape) != 2 and Tmatrix.shape != (4, 4):
             raise Exception("Tmatrix must be of shape (4, 4), not: %s" % Tmatrix.shape)
         
@@ -68,6 +80,8 @@ class MapView(object):
 
     @classmethod
     def translation_matrix(cls, displacement):
+        """Returns a translation matrix given x, y, z values"""
+
         Tx, Ty, Tz = displacement
         T = array([[1, 0, 0, Tx],
                    [0, 1, 0, Ty],
@@ -76,19 +90,25 @@ class MapView(object):
         return T
 
     def translate_absolute(self, displacement):
+        """Translates the view absolute to the given x, y, z values"""
+
         T = MapView.translation_matrix(displacement)
         return self.apply_transformation(T)
 
     def translate_relative(self, displacement):
-        d_affine = array(displacement)
-        d_affine.resize(4)
-        d_affine[3] = 1
+        """Translate the view relative to the current view orientation
+        where the z value would be facing forward, x to the left and right
+        and y upwards"""
+
+        dx, dy, dz = displacement
         Tr = MapView.rotation_matrix_y(-self.yaw)
-        trans = dot(Tr, d_affine)
+        trans = dot(Tr, [dx, dy, dz, 1])
         return self.translate_absolute(trans[:3])
 
     @classmethod
     def rotation_matrix_y(cls, angle):
+        """Return a rotation matrix around the y axis given an angle in radians"""
+
         T = array([[ cos(angle),    0, sin(angle), 0],
                    [         0,     1,          0, 0],
                    [-sin(angle),    0, cos(angle), 0],
@@ -96,19 +116,24 @@ class MapView(object):
         return T
 
     def rotate_y(self, angle):
-        # Keep track for current posistion
+        """Rotate the view around the y axis given an angle in radians"""
+
+        # Keep track for current yaw
         self.yaw += angle
         
-        orig_pos = self.position()
-
         # Translate back to origin, rotate, then translate back    
-        Tt1 = MapView.translation_matrix(-orig_pos)
+        pos = self.position()
+        Tt1 = MapView.translation_matrix(-pos)
         Tr = MapView.rotation_matrix_y(angle)
-        Tt2 = MapView.translation_matrix(orig_pos)
+        Tt2 = MapView.translation_matrix(pos)
 
         return self.apply_transformation(dot(Tt2, dot(Tr, Tt1)))
 
     def map_data(self, set_val=None):
+        """Returns a matrix sized the same as the view matrix
+        with the Minecraft block IDs at the points represented
+        in the view matrix"""
+
         if set_val != None and tuple(set_val.shape) != tuple(self.view.shape[:3]):
             raise Exception("set_val must have shape of %s to match view shape, not: %s" % (self.view.shape[:3], set_val.shape))
 
@@ -126,6 +151,10 @@ class MapView(object):
         return out_data
 
     def bounds_matrix(self):
+        """Create a matrix the same size as the view matrix where
+        a value is true if that coordinate is within bounds, false
+        otherwise"""
+
         bb = self.world.getWorldBounds()
         
         view_in_bounds = zeros(self.view.shape[:3], dtype=bool)
@@ -139,5 +168,6 @@ class MapView(object):
         return view_in_bounds
 
     def in_bounds(self):
+        "Returns true if all points are within the bounds of the world"
         return all(self.bounds_matrix())
                         
