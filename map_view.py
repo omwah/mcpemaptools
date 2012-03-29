@@ -1,6 +1,6 @@
 import logging
 
-from math import sin, cos, radians, degrees, pi
+from math import sin, cos, radians, degrees, pi, floor
 from numpy import array, zeros, dot, round, all
 
 logger = logging.getLogger(__file__)
@@ -36,11 +36,27 @@ class MapView(object):
 
         logger.debug("Created view at position %s with yaw %s" % (self.pos, degrees(self.yaw)))
 
-    def position(self):
+    def clone(self, **kwargs):
+        """Return a copy of the current view"""
+
+        return MapView(self.world, self.view.shape[:3], self.origin_position(), self.yaw, **kwargs)
+
+    def origin_position(self):
         """Returns position from which the view originates,
         ie: The bottom right corner of the 0th z dimension"""
 
         return self.view[0, -1, -1, :3]
+
+    def center_position(self):
+        """Returns position nearest to the center of the view
+        as possible. If the shape of the view is odd in a 
+        dimension then it will be the real center point."""
+
+        z_cen = floor(self.view.shape[0] / 2.0)
+        y_cen = floor(self.view.shape[1] / 2.0)
+        x_cen = floor(self.view.shape[2] / 2.0)
+
+        return self.view[z_cen, y_cen, x_cen, :3]
 
     def set_position(self, pos, increment=(1,1,1)):
         """Default increment values will give view matrix oriented as
@@ -122,7 +138,7 @@ class MapView(object):
         self.yaw += angle
         
         # Translate back to origin, rotate, then translate back    
-        pos = self.position()
+        pos = self.center_position()
         Tt1 = MapView.translation_matrix(-pos)
         Tr = MapView.rotation_matrix_y(angle)
         Tt2 = MapView.translation_matrix(pos)
