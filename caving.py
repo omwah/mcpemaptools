@@ -30,6 +30,12 @@ tunnel_pattern = array([
          [ 1,  1, 48,  1,  1,],],
         ])
 
+lava_tube = array([
+        [[73, 73, 73,],
+         [73, 11, 73,],
+         [73, 73, 73,],],
+        ])
+
 logger = logging.getLogger(__name__)
 
 def make_cave(view, pattern, 
@@ -53,15 +59,17 @@ def make_cave(view, pattern,
     while cave_len < max_cave_len:
     
         if not view.in_bounds():
-            logger.debug("Cave went out of bounds, quiting.")
+            logger.info("Cave went out of bounds, quiting.")
             break
         elif all(ravel(view.map_data()) == 0):
-            logger.debug("Hit air pocket\n%s" % view.map_data())
+            logger.info("Hit air pocket, quiting")
+            logger.debug("%s" % view.map_data())
             break
         elif any(ravel(view.map_data()) == view.world.materials.Bedrock.ID):
             # Lets not go past any bedrock blocks or else we might
             # make a hole in the world
-            logger.debug("Hit bedrock\n%s" % view.map_data())
+            logger.info("Hit bedrock, quiting")
+            logger.debug("%s" % view.map_data())
             break
 
         # Get current map slice and apply pattern
@@ -81,12 +89,12 @@ def make_cave(view, pattern,
 
         # Change orientation every so often
         if(random.sample() > (1-do_rotate_prob) and turns_since_rotate > turns_till_rotate):
-            logger.debug("Changing orientation by %f deg at cave length %d" % (turn_dir, cave_len))
+            logger.info("Changing orientation by %f deg at cave length %d" % (turn_dir, cave_len))
             view.rotate_y(radians(turn_dir))
             turns_since_rotate = 0
 
         elif random.sample() > (1-branch_prob) and turns_since_branch > turns_till_branch:
-            logger.debug("Launching branch by %f deg at cave length %d" % (turn_dir, cave_len))
+            logger.info("Launching branch by %f deg at cave length %d" % (turn_dir, cave_len))
             branch_view = view.clone()
             branch_view.rotate_y(radians(turn_dir))
     
@@ -120,6 +128,6 @@ def make_cave(view, pattern,
     
     # Mark that we hit the cave
     if cave_len > max_cave_len:
-        logger.debug("Hit max cave length, %d" % max_cave_len)
+        logger.info("Quit at max cave length %d" % max_cave_len)
 
-    logger.debug("Cave was %d blocks long" % (cave_len))
+    logger.info("Cave was %d blocks long" % (cave_len))
