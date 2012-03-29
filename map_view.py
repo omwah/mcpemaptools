@@ -13,7 +13,7 @@ class MapView(object):
     system the values of y and x will be decreasing from the top left
     and z will be in increasing order."""
 
-    def __init__(self, world, view_shape, pos=(0,0,0), yaw=0, **kwargs):
+    def __init__(self, world, view_shape, pos=(0,0,0), yaw=0, pitch=0, **kwargs):
         """Create a new view into the Minecraft world given the world
         object, size of the view and optionally a initial position
         and yaw"""
@@ -28,12 +28,15 @@ class MapView(object):
         self.pos = pos
         self.set_position(self.pos, **kwargs)
 
-        # To keep track of rotations along y axis (yaw)
-        # We let the rotate routine keep track, but
+        # Keep track of rotations 
+        # We let the rotate routines keep track, but
         # we must initialize first
         self.yaw = 0
         self.rotate_y(yaw)
 
+        self.pitch = 0
+        self.rotate_x(pitch)
+        
         logger.debug("Created view at position %s with yaw %s" % (self.pos, degrees(self.yaw)))
 
     def clone(self, **kwargs):
@@ -117,8 +120,9 @@ class MapView(object):
         and y upwards"""
 
         dx, dy, dz = displacement
-        Tr = MapView.rotation_matrix_y(-self.yaw)
-        trans = dot(Tr, [dx, dy, dz, 1])
+        Tr1 = MapView.rotation_matrix_y(-self.yaw)
+        Tr2 = MapView.rotation_matrix_x(-self.pitch)
+        trans = dot(Tr2, dot(Tr1, [dx, dy, dz, 1]))
         return self.translate_absolute(trans[:3])
 
     @classmethod
@@ -141,6 +145,30 @@ class MapView(object):
         pos = self.center_position()
         Tt1 = MapView.translation_matrix(-pos)
         Tr = MapView.rotation_matrix_y(angle)
+        Tt2 = MapView.translation_matrix(pos)
+
+        return self.apply_transformation(dot(Tt2, dot(Tr, Tt1)))
+
+    @classmethod
+    def rotation_matrix_x(cls, angle):
+        """Return a rotation matrix around the x axis given an angle in radians"""
+
+        T = array([[     1,          0,            0, 0],
+                   [     0,  cos(angle), -sin(angle), 0],
+                   [     0,  sin(angle),  cos(angle), 0],
+                   [     0,           0,           0, 1]])
+        return T
+
+    def rotate_x(self, angle):
+        """Rotate the view around the x axis given an angle in radians"""
+
+        # Keep track for current yaw
+        self.pitch += angle
+        
+        # Translate back to origin, rotate, then translate back    
+        pos = self.center_position()
+        Tt1 = MapView.translation_matrix(-pos)
+        Tr = MapView.rotation_matrix_x(angle)
         Tt2 = MapView.translation_matrix(pos)
 
         return self.apply_transformation(dot(Tt2, dot(Tr, Tt1)))

@@ -2,6 +2,8 @@ import logging
 from numpy import array, where, mod, random, ravel
 from math import degrees, radians
 
+from map_view import MapView
+
 # Define a pattern in the x * y or z * y dimension which will
 # replace existing blocks where caving is in progress. A value
 # of -1 means keep existing blocks. The matrix is oriented so
@@ -34,6 +36,12 @@ lava_tube = array([
         [[73, 73, 73,],
          [73, 11, 73,],
          [73, 73, 73,],],
+        ])
+
+water_tube = array([
+        [[ 9,  9,  9,],
+         [ 9,  8,  9,],
+         [ 9,  9,  9,],],
         ])
 
 logger = logging.getLogger(__name__)
@@ -131,3 +139,33 @@ def make_cave(view, pattern,
         logger.info("Quit at max cave length %d" % max_cave_len)
 
     logger.info("Cave was %d blocks long" % (cave_len))
+
+def find_ground_level(world, pos, percent_ground=0.65, search_size=3):
+    """Returns a location in the y axis where the percentage of non
+    air blocks to air blocks exceeds the specified value. Searches
+    from the specified x, z coordinates from the top of the world
+    downward."""
+
+    if len(pos) > 2:
+        raise ValueError("Only specify x and z coordinates for position")
+
+    bb= world.getWorldBounds()
+
+    # Make posistion for view such that the specified position will be in
+    # the middle. View extends from bottom to top of world
+    pos = array((pos[0], bb.miny, pos[1]))
+    pos += array((-round(search_size/2), 0, -round(search_size/2)))
+
+    # Create a view around the search location
+    search_view = MapView(world, (search_size, bb.maxy, search_size), pos)
+    search_data = search_view.map_data()
+
+    # First index in y dimension where the search view is not all air
+    where_no_air = where(search_view.map_data() != 0)
+    ground_idx = min(where_no_air[1]) - 1
+    ground_per = 0
+    while ground_idx < bb.maxy and ground_per < percent_ground:
+        ground_per = len(where(search_data[:, ground_idx, :] != 0)[0]) / float(search_size*search_size)
+        ground_idx += 1
+
+    return search_view.view[0, ground_idx, 0][1]
