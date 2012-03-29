@@ -34,9 +34,10 @@ logger = logging.getLogger(__name__)
 
 def make_cave(view, pattern, 
               max_cave_len=250, 
-              do_rotate_prob=0.5, turns_till_rotate=10, rotate_dir_prob=0.5,
-              branch_prob=0.1, turns_till_branch=50,
-              shear_range=(-1, 1), vert_inc_prob=0.4):
+              rotate_dir_prob=0.5, # Probability to prefer 90 over -90 deg
+              do_rotate_prob=0.5, turns_till_rotate=10,
+              shear_range=(-1, 1), vert_inc_prob=0.4,
+              branch_prob=0.3, turns_till_branch=20, branch_level=0):
 
     # Mark which points we will actually set within the pattern
     where_set = where(pattern > -1)
@@ -67,32 +68,39 @@ def make_cave(view, pattern,
         curr_slice = view.map_data()
         curr_slice[where_set] = pattern[where_set]
         curr_slice = view.map_data(curr_slice)
-        logger.debug("%s @ %f deg" % (view.origin_position(), mod(degrees(view.yaw), 360)))
+        logger.debug("B: %d P: %s @ %f deg" % (branch_level,
+                                               view.origin_position(), 
+                                               mod(degrees(view.yaw), 360)))
         logger.debug("%s" % curr_slice)
 
         # For use by branching or turning
-        if (random.sample() > rotate_dir_prob):
+        if (random.sample() > (1-rotate_dir_prob)):
             turn_dir =  90
         else:
             turn_dir = -90
 
         # Change orientation every so often
-        if(random.sample() > do_rotate_prob and turns_since_rotate > turns_till_rotate):
+        if(random.sample() > (1-do_rotate_prob) and turns_since_rotate > turns_till_rotate):
             logger.debug("Changing orientation by %f deg at cave length %d" % (turn_dir, cave_len))
             view.rotate_y(radians(turn_dir))
             turns_since_rotate = 0
 
-        elif random.sample() > branch_prob and turns_since_branch > turns_till_branch:
+        elif random.sample() > (1-branch_prob) and turns_since_branch > turns_till_branch:
             logger.debug("Launching branch by %f deg at cave length %d" % (turn_dir, cave_len))
             branch_view = view.clone()
             branch_view.rotate_y(radians(turn_dir))
     
-            # Recurse to make branch cave. Set liklihood of a new branch from this
-            # one to 0.0
-            branch_branch_prob = 0.0
-            make_cave(view, pattern, 
-                      max_cave_len, do_rotate_prob, turns_till_rotate, rotate_dir_prob,
-                      branch_branch_prob, turns_till_branch, shear_range, vert_inc_prob)
+            # Recurse to make branch cave. 
+            make_cave(branch_view, pattern, 
+                      max_cave_len=max_cave_len/2, # Not the main tunnel so make it shorter
+                      rotate_dir_prob=rotate_dir_prob,
+                      do_rotate_prob=do_rotate_prob, 
+                      turns_till_rotate=turns_till_rotate,
+                      shear_range=shear_range, 
+                      vert_inc_prob=vert_inc_prob,
+                      branch_prob=0, # Set likelihood of a new branch from this one to 0.0
+                      turns_till_branch=turns_till_branch, 
+                      branch_level=branch_level+1)
             turns_since_branch = 0
         else:
             # Random amount of side to side and vertical motion, equally likely

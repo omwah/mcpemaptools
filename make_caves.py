@@ -3,16 +3,13 @@
 import os
 import sys
 import logging
-import random
 
-from numpy import array, round, mod
+from numpy import round, mod
 from math import degrees, radians, floor
-
-from pymclevel.pocket import PocketWorld
-from opennbt import NBTFile
 
 from map_view import MapView
 from caving import make_cave, tunnel_pattern
+from utils import load_world_and_player, get_player_pos_yaw
 
 # Set up logging so we can see debug messages from pymclevel
 logger = logging.getLogger()
@@ -20,22 +17,14 @@ sh=logging.StreamHandler()
 logger.addHandler(sh)
 logger.setLevel(logging.DEBUG)
 
-w_file = sys.argv[1]
-logger.info("Loading world file: %s" % w_file)
-world = PocketWorld(w_file)
+# Load world and player file (level.dat) from same place
+world, player = load_world_and_player(sys.argv[1])
 
-p_file = os.path.join(os.path.dirname(world.filename), "level.dat")
-logger.info("Loading player file: %s" % p_file)
-player = NBTFile(p_file, compressed=False)
-
-# Extract player posistion from NBT file and convert to numpy array
-player_pos = array([ round(pval.value) for pval in player.value['Player'].value['Pos'].value ])
-logger.debug("Player posistion: %s" % player_pos)
+# Extract player posistion and yaw from NBT file
+player_pos, player_yaw = get_player_pos_yaw(player)
 
 # Get closest yaw to something divisible by 90 deg
-player_yaw = mod(player.value['Player'].value['Rotation'].value[0].value, 360)
-player_yaw = radians(90*round(player_yaw/90))
-logger.debug("Player yaw: %s" % degrees(player_yaw))
+player_yaw = radians(90*round(degrees(player_yaw)/90))
 
 # Set up view object we will use to move through the world
 cave_view = MapView(world, tunnel_pattern.shape, player_pos, yaw=player_yaw)
